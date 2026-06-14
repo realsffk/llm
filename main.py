@@ -1,5 +1,7 @@
 import os
 import logging
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from openai import AsyncOpenAI
@@ -79,5 +81,23 @@ if __name__ == '__main__':
         # Adiciona o handler para todas as mensagens de texto
         application.add_handler(MessageHandler(filters.TEXT, handle_message))
 
-        logger.info("Bot está rodando em modo polling (Background Worker).")
+        # Servidor web dummy para o Render Web Service (Free Tier)
+        class DummyHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"Bot is running!")
+
+        def run_dummy_server():
+            port = int(os.environ.get("PORT", 10000))
+            server = HTTPServer(("0.0.0.0", port), DummyHandler)
+            logger.info(f"Dummy web server rodando na porta {port} (para manter o Render Web Service Free ativo)...")
+            server.serve_forever()
+
+        # Inicia o servidor web em uma thread separada
+        server_thread = threading.Thread(target=run_dummy_server, daemon=True)
+        server_thread.start()
+
+        logger.info("Bot está rodando em modo polling (Web Service).")
         application.run_polling()
