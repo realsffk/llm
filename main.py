@@ -4,9 +4,6 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from openai import AsyncOpenAI
 
-# 3. Variável global para instruções do sistema
-SYSTEM_INSTRUCTION = ""
-
 # 5. Configuração de logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -18,6 +15,9 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME")
+
+# Variável global para instruções do sistema
+SYSTEM_INSTRUCTION = ""
 
 # 1. Configurando o cliente da OpenAI para a API do OpenRouter
 client = None
@@ -62,6 +62,16 @@ if __name__ == '__main__':
             base_url="https://openrouter.ai/api/v1",
             api_key=OPENROUTER_API_KEY,
         )
+
+        # 3. Carrega instruções do sistema de um arquivo Markdown
+        try:
+            with open("instructions.md", "r", encoding="utf-8") as f:
+                SYSTEM_INSTRUCTION = f.read()
+            logger.info("Instruções do sistema carregadas de instructions.md")
+        except FileNotFoundError:
+            logger.warning("Arquivo instructions.md não encontrado. O bot rodará sem instruções de sistema.")
+        except Exception as e:
+            logger.error(f"Erro ao ler instructions.md: {e}")
 
         logger.info("Iniciando o bot...")
         application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
