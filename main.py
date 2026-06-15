@@ -3,7 +3,6 @@ import logging
 import threading
 import httpx
 import time
-import uuid
 import aiosqlite
 import asyncio
 from datetime import datetime, timedelta
@@ -24,6 +23,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME")
 LOFYPAY_SECRET = os.getenv("LOFYPAY_SECRET") # Ex: sk_live_... ou sk_test_...
+VIP_LINK = os.getenv("VIP_LINK") # Opcional: Link enviado após a confirmação do PIX (ex: Grupo VIP)
 
 # Variável global para instruções do sistema
 SYSTEM_INSTRUCTION = ""
@@ -223,9 +223,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                             await db.commit()
 
-                            await query.edit_message_text(f"Eba!! 🎉 Pagamento do {PLANOS[plano_key]['nome']} confirmado! Seu acesso VIP está liberado. Me manda um 'Oi' para a gente começar a conversar! 🥰")
+                            sucesso_msg = f"Eba!! 🎉 Pagamento do {PLANOS[plano_key]['nome']} confirmado! Seu acesso VIP está liberado. Me manda um 'Oi' para a gente começar a conversar! 🥰"
+
+                            if VIP_LINK:
+                                sucesso_msg += f"\n\nAqui está o seu link de acesso exclusivo: {VIP_LINK}"
+
+                            await query.edit_message_text(sucesso_msg)
                         else:
-                            await query.edit_message_text("Esse pagamento já foi processado! Você já tem acesso VIP. Pode mandar mensagem! 😘")
+                            msg_processado = "Esse pagamento já foi processado! Você já tem acesso VIP. Pode mandar mensagem! 😘"
+                            if VIP_LINK:
+                                msg_processado += f"\n\nSeu link de acesso exclusivo: {VIP_LINK}"
+
+                            await query.edit_message_text(msg_processado)
                 else:
                     keyboard = [[InlineKeyboardButton("🔄 Verificar de novo", callback_data=f"check_{transaction_id}")]]
                     reply_markup = InlineKeyboardMarkup(keyboard)
