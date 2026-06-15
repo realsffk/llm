@@ -300,13 +300,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not is_user_vip:
         # Palavras-chave que bloqueiam instantaneamente o não-pagante
-        gatilhos = ["foto", "video", "nude", "audio", "mandar uma", "mostra", "pelada"]
+        gatilhos = [
+            "foto", "video", "nude", "audio", "mandar uma", "mostra", "pelada",
+            "vip", "assinatura", "exclusivo", "premium", "privado", "acesso especial"
+        ]
         bateu_gatilho = any(gatilho in user_text for gatilho in gatilhos)
 
         if bateu_gatilho:
             await send_paywall(
                 update,
-                "Haha, apressadinho! 🤭 Se você quiser ver minhas fotos e vídeos mais quentes, você precisa assinar o meu VIP primeiro! Olha os planos: 👇"
+                "Haha, apressadinho! 🤭 Se você quiser ver minhas fotos, vídeos exclusivos e ter acesso ao meu conteúdo premium, você precisa assinar o meu VIP! Olha os planos: 👇"
             )
             return
 
