@@ -167,28 +167,34 @@ async def generate_pix(user_id, plano_key):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Trata cliques nos botões."""
     query = update.callback_query
-    await query.answer()
 
     user_id = query.from_user.id
     data = query.data
 
     if data.startswith("buy_"):
+        await query.answer("Gerando seu PIX... ⏳")
         plano_key = data.split("_")[1]
-
-        await query.edit_message_text(f"Gerando o seu PIX para o {PLANOS[plano_key]['nome']}... Aguarde um segundo ⏳")
 
         pix_data = await generate_pix(user_id, plano_key)
 
         if pix_data:
             transaction_id, payment_code = pix_data
 
+            # Edita a mensagem original para apenas as instruções
+            await query.edit_message_text(
+                f"✅ Tudo certo! Aqui está o seu código para o *{PLANOS[plano_key]['nome']}*.\n\n"
+                "👇 *Basta dar 1 TOQUE no código abaixo para copiar* e pagar no app do seu banco.",
+                parse_mode="Markdown"
+            )
+
+            # Envia uma nova mensagem APENAS com o código formatado. No Telegram mobile,
+            # enviar um bloco de código (monospaced) sozinho permite o recurso "Tocar para Copiar".
             keyboard = [[InlineKeyboardButton("✅ Já paguei! Verificar pagamento", callback_data=f"check_{transaction_id}")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await query.edit_message_text(
-                f"Aqui está o seu PIX Copia e Cola para o **{PLANOS[plano_key]['nome']}**:\n\n"
-                f"`{payment_code}`\n\n"
-                f"Copie o código acima, pague no seu banco e depois clique no botão abaixo para eu liberar o seu acesso! 🥰",
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=f"`{payment_code}`",
                 parse_mode="Markdown",
                 reply_markup=reply_markup
             )
@@ -198,7 +204,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("check_"):
         transaction_id = data.split("_")[1]
 
-        await query.edit_message_text("Estou verificando com o banco... Só um momento! 🕵️‍♀️")
+        # Omitimos o edit_message_text aqui para não apagar o código PIX e o botão
+        # antes da resposta final.
 
         headers = {
             "Authorization": f"Bearer {LOFYPAY_SECRET}",
@@ -255,20 +262,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 sucesso_msg += f"\n\nAqui está o seu link de acesso exclusivo: {VIP_LINK}"
 
                             await query.edit_message_text(sucesso_msg)
+                            await query.answer()
                         else:
                             msg_processado = "Esse pagamento já foi processado! Você já tem acesso VIP. Pode mandar mensagem! 😘"
                             if VIP_LINK:
                                 msg_processado += f"\n\nSeu link de acesso exclusivo: {VIP_LINK}"
 
                             await query.edit_message_text(msg_processado)
+                            await query.answer()
                 else:
-                    keyboard = [[InlineKeyboardButton("🔄 Verificar de novo", callback_data=f"check_{transaction_id}")]]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    await query.edit_message_text("Hum... O pagamento ainda não confirmou aqui pra mim. Se você já pagou, pode demorar alguns segundinhos. Tente novamente! ⏳", reply_markup=reply_markup)
+                    # Em vez de editar a mensagem e destruir o botão PIX, mostra um popup nativo no topo da tela do celular
+                    await query.answer(
+                        "⏳ O pagamento ainda não caiu aqui pra mim!\n\nSe você já pagou, o banco pode demorar alguns segundinhos. Aguarde e clique de novo!",
+                        show_alert=True
+                    )
 
             except Exception as e:
                 logger.error(f"Erro ao verificar PIX: {e}")
-                await query.edit_message_text("Deu um erro ao tentar verificar... Me desculpe! Tente de novo. 💔")
+                await query.answer("Deu um erro de rede. Tente de novo em alguns segundos!", show_alert=True)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
