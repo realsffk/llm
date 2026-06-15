@@ -41,13 +41,21 @@ DB_PATH = os.getenv("DB_PATH", "database.db")
 # Inicialização do Banco de Dados Local (SQLite)
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
-        # Tabela de Usuários (assinantes)
+        # Tabela de Usuários (assinantes e leads)
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
-                expiration_date TEXT
+                expiration_date TEXT,
+                message_count INTEGER DEFAULT 0
             )
         ''')
+
+        # Migração: tenta adicionar a coluna caso o banco já tenha sido criado antes
+        try:
+            await db.execute('ALTER TABLE users ADD COLUMN message_count INTEGER DEFAULT 0')
+        except Exception:
+            pass
+
         # Tabela de Transações pendentes (para conciliação)
         await db.execute('''
             CREATE TABLE IF NOT EXISTS transactions (
@@ -65,7 +73,7 @@ async def is_vip(user_id):
         async with db.execute('SELECT expiration_date FROM users WHERE user_id = ?', (user_id,)) as cursor:
             row = await cursor.fetchone()
 
-    if not row:
+    if not row or not row[0]:
         return False
 
     expiration_date = datetime.fromisoformat(row[0])
@@ -74,8 +82,25 @@ async def is_vip(user_id):
 # 1. Configurando o cliente da OpenAI para a API do OpenRouter
 client = None
 
-async def cmd_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Exibe as opções de planos."""
+# Funções de rastreio de leads
+async def increment_message_count(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT INTO users (user_id, expiration_date, message_count)
+            VALUES (?, NULL, 1)
+            ON CONFLICT(user_id)
+            DO UPDATE SET message_count = message_count + 1
+        ''', (user_id,))
+        await db.commit()
+
+async def get_message_count(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute('SELECT message_count FROM users WHERE user_id = ?', (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+async def send_paywall(update: Update, message_text: str):
+    """Exibe o paywall com uma mensagem customizada."""
     keyboard = [
         [InlineKeyboardButton("Plano Mensal - R$ 19,90", callback_data="buy_mensal")],
         [InlineKeyboardButton("Plano Trimestral - R$ 49,90", callback_data="buy_trimestre")],
@@ -84,10 +109,11 @@ async def cmd_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if update.message:
-        await update.message.reply_text(
-            "Oi! Para conversar comigo sem limites, você precisa de um passe VIP. Escolha um plano abaixo para gerar o seu PIX: 👇",
-            reply_markup=reply_markup
-        )
+        await update.message.reply_text(message_text, reply_markup=reply_markup)
+
+async def cmd_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando manual para exibir os planos."""
+    await send_paywall(update, "Aqui estão os meus planos VIP para você ter acesso a tudo meu e conversar comigo sem limites: 👇")
 
 async def generate_pix(user_id, plano_key):
     """Gera um PIX na LofyPay."""
@@ -204,7 +230,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             async with db.execute('SELECT expiration_date FROM users WHERE user_id = ?', (user_id,)) as cursor:
                                 vip_row = await cursor.fetchone()
 
-                            if vip_row and datetime.now() < datetime.fromisoformat(vip_row[0]):
+                            if vip_row and vip_row[0] and datetime.now() < datetime.fromisoformat(vip_row[0]):
                                 current_exp = datetime.fromisoformat(vip_row[0])
                             else:
                                 current_exp = datetime.now()
@@ -247,27 +273,50 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    4. Recebe a mensagem do usuário. Se for VIP, conversa com o OpenRouter.
-       Se não, mostra a tabela de planos.
+    Recebe a mensagem do usuário.
+    Se for VIP, conversa sem limites.
+    Se não for VIP, conta mensagens e bloqueia pedindo pagamento se chegar no limite
+    ou se pedir mídia explícita (gatilho).
     """
     if not update.message or not update.message.text:
         return
 
     user_id = update.message.from_user.id
-    user_text = update.message.text
+    user_text = update.message.text.lower()
+    user_text_original = update.message.text
 
-    # Verifica se tem assinatura ativa
     is_user_vip = await is_vip(user_id)
+
     if not is_user_vip:
-        await cmd_planos(update, context)
-        return
+        # Palavras-chave que bloqueiam instantaneamente o não-pagante
+        gatilhos = ["foto", "video", "nude", "audio", "mandar uma", "mostra", "pelada"]
+        bateu_gatilho = any(gatilho in user_text for gatilho in gatilhos)
+
+        if bateu_gatilho:
+            await send_paywall(
+                update,
+                "Haha, apressadinho! 🤭 Se você quiser ver minhas fotos e vídeos mais quentes, você precisa assinar o meu VIP primeiro! Olha os planos: 👇"
+            )
+            return
+
+        # Controle de limite de mensagens para aquecer o lead (Ex: limite de 15 mensagens)
+        MAX_FREE_MESSAGES = 15
+        await increment_message_count(user_id)
+        msg_count = await get_message_count(user_id)
+
+        if msg_count > MAX_FREE_MESSAGES:
+            await send_paywall(
+                update,
+                "Poxa, nosso tempo gratuito de teste acabou... 💔 Mas eu amei conversar com você! Pra gente continuar nosso papo gostoso e sem limites, escolhe um dos meus planos VIP: 👇"
+            )
+            return
 
     try:
         messages = []
         if SYSTEM_INSTRUCTION:
             messages.append({"role": "system", "content": SYSTEM_INSTRUCTION})
 
-        messages.append({"role": "user", "content": user_text})
+        messages.append({"role": "user", "content": user_text_original})
 
         response = await client.chat.completions.create(
             model=MODEL_NAME,
